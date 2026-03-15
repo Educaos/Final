@@ -1,0 +1,16 @@
+﻿etapa,n
+1. Registros cargados del RIS,29131
+2. Duplicados eliminados (DOI exacto),6
+3. Duplicados eliminados (titulo similar),45
+4. Registros unicos analizados,29080
+--- EXCLUIDOS ---,
+5. Anio fuera de rango,116
+6. Tipo documental inadecuado,275
+7. Contaminante fuera de foco,743
+8. Tipo de estudio fuera de foco,3235
+9. Total EXCLUIDOS,2337
+--- INCLUIDOS ---,
+10. INCLUIDOS alta relevancia,13698
+11. INCLUIDOS media relevancia,371
+12. PRIORIDAD BAJA (revisar manualmente),12674
+13. Con datos cuantitativos (meta-analisis),4674
