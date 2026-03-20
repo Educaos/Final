@@ -128,7 +128,7 @@ print(f"      Titulo ejemplo : {str(df['title_raw'].iloc[0])[:70]}...")
 print(f"      Anios con dato : {df['year'].notna().sum():,}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PASO 3 — DEDUPLICACIÓN RÁPIDA (Frecuecnia de termino-IDF)
+# PASO 3 — DEDUPLICACIÓN RÁPIDA (Frecuencia de termino-IDF)
 # ─────────────────────────────────────────────────────────────────────────────
 print(f"\n{seg()} PASO 3/9 — Detectando duplicados (puede tardar 1-3 min)...")
 
@@ -240,6 +240,19 @@ KW_ADSORCION = [
     "surface area","area superficial","pore size","pore volume",
     "ftir","xps","regeneration","reusability","desorption",
 ]
+# Expresiones regulares para pH, qmax y % de remoción
+KW_CUANTITATIVOS = [
+    "pH",              # pH
+    "qmax",            # qmax (capacidad máxima de adsorción)
+    "adsorption capacity",  # Capacidad de adsorción (término común)
+    "removal efficiency",  # Eficiencia de remoción
+    "removal",         # Remoción (genérico)
+    "% removal",       # Porcentaje de remoción
+    "capacity",        # Capacidad de adsorción
+    "mg/g",            # Unidad de medida común en adsorción
+    "qe",              # Carga adsorbida
+    "adsorption rate"  # Tasa de adsorción
+]
 KW_EXCL_CONTAM = [
     "pfas","perfluoro","perfluorinated",
     # pesticidas — solo si son el foco PRINCIPAL
@@ -279,6 +292,7 @@ KW_EXCL_DOC = [
 def make_rx(lista):
     esc = [re.escape(norm(k)) for k in lista if k.strip()]
     return re.compile(r"(" + "|".join(esc) + r")", re.IGNORECASE)
+    
 
 RX_OBJ   = make_rx(KW_OBJETIVO)
 RX_AGU   = make_rx(KW_AGUA)
@@ -286,6 +300,8 @@ RX_ADS   = make_rx(KW_ADSORCION)
 RX_EXC_C = make_rx(KW_EXCL_CONTAM)
 RX_EXC_E = make_rx(KW_EXCL_ESTUDIO)
 RX_EXC_D = make_rx(KW_EXCL_DOC)
+# Crear la expresión regular para buscar las palabras clave de datos cuantitativos
+RX_CUANTITATIVOS = make_rx(KW_CUANTITATIVOS)
 
 def hits(r, t): return len(r.findall(t)) if t else 0
 def flag(r, t): return 1 if (t and r.search(t)) else 0
@@ -297,6 +313,12 @@ df_base["hits_ads"] = df_base["texto"].apply(lambda t: hits(RX_ADS, t))
 df_base["exc_c"]    = df_base["texto"].apply(lambda t: flag(RX_EXC_C, t))
 df_base["exc_e"]    = df_base["texto"].apply(lambda t: flag(RX_EXC_E, t))
 df_base["exc_d"]    = df_base["texto"].apply(lambda t: flag(RX_EXC_D, t))
+# Aplicar filtro para buscar pH, qmax, % de remoción en el texto del artículo
+df_base["hits_cuantitativos"] = df_base["texto"].apply(lambda t: hits(RX_CUANTITATIVOS, t))
+# Marcar los artículos que no contienen estos términos como "EXCLUIDO"
+df_base["etiqueta"] = df_base.apply(lambda r: "EXCLUIDO" if r["hits_cuantitativos"] == 0 else r["etiqueta"], axis=1)
+# Filtrar los artículos que tienen al menos uno de los términos cuantitativos (pH, qmax, % remoción)
+df_base["pasa_cuantitativos"] = df_base["hits_cuantitativos"] > 0
 df_base["anio_ok"]  = df_base["year"].between(YEAR_MIN, YEAR_MAX, inclusive="both").fillna(False)
 
 df_base["score"] = (
@@ -307,6 +329,7 @@ df_base["pasa_core"] = (
     (df_base["hits_obj"] > 0) & (df_base["hits_agu"] > 0) &
     (df_base["hits_ads"] > 0) & (df_base["anio_ok"] == True)
 )
+
 
 def razones(r):
     R = []
@@ -341,6 +364,9 @@ for etiq, n in dist.items():
 
 df_inc = df_base[df_base["etiqueta"].isin(["INCLUIDO_ALTA", "INCLUIDO_MEDIA"])].copy()
 print(f"\n      >>> Articulos incluidos (alta + media): {len(df_inc):,} <<<")
+# Verificar cuántos artículos tienen datos cuantitativos y cómo están etiquetados
+print(f"Artículos con datos cuantitativos: {df_base['pasa_cuantitativos'].sum()}")
+print(f"Etiquetas asignadas: {df_base['etiqueta'].value_counts()}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PASO 5 — PAÍS Y CONTINENTE
