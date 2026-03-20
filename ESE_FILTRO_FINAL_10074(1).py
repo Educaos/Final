@@ -193,9 +193,6 @@ print(f"\n{seg()} PASO 4/9 — Aplicando criterios de inclusion/exclusion...")
 
 KW_OBJETIVO = [
     "antibiotic","antibiotics","antibiotico","antibioticos",
-    "pharmaceutical","pharmaceuticals","farmaceutico",
-    "emerging contaminant","emerging contaminants",
-    "contaminante emergente","contaminantes emergentes",
     "micropollutant","micropollutants","micropoluente",
     "fluoroquinolone","fluoroquinolones","quinolone","quinolones",
     "sulfonamide","sulfonamides","macrolide","macrolides",
@@ -219,9 +216,7 @@ KW_OBJETIVO = [
 ]
 KW_AGUA = [
     "water","wastewater","waste water","agua","aguas",
-    "agua residual","aguas residuales","efluente","solucion acuosa",
-    "medio acuoso","effluent","aqueous","aqueous solution",
-    "surface water","groundwater","river water","lake water",
+    "agua residual","aguas residuales","groundwater",
     "drinking water","sewage","wwtp","wastewater treatment plant",
     "industrial wastewater","hospital wastewater","municipal wastewater",
     "synthetic wastewater","tratamiento de aguas",
@@ -239,12 +234,11 @@ KW_ADSORCION = [
     "qmax","qe","mg/g","mg g-1",
     "adsorption capacity","capacidad de adsorcion",
     "removal efficiency","percentage removal","porcentaje de remocion",
-    "langmuir","freundlich","temkin",
-    "isotherm","isoterma","kinetic","kinetics","cinetica",
+    "langmuir","freundlich","isotherm","isoterma",
+    "kinetic","kinetics","cinetica",
     "pseudo-first-order","pseudo second order","pfo","pso",
     "surface area","area superficial","pore size","pore volume",
-    "ftir","xps","functional group","grupos funcionales",
-    "regeneration","reusability","desorption",
+    "ftir","xps","regeneration","reusability","desorption",
 ]
 KW_EXCL_CONTAM = [
     "pfas","perfluoro","perfluorinated",
@@ -543,16 +537,6 @@ def extraer_poro(t):
     m = re.search(r"pore\s*(?:size|diameter)[^0-9]{0,8}([\d]+\.?[\d]*)\s*(nm|a)", t)
     return float(m.group(1)) if m else None
 
-def detect_grupos(t):
-    grupos = []
-    if re.search(r"\boh\b|hydroxyl", t):              grupos.append("OH")
-    if re.search(r"\bcooh\b|carboxyl", t):            grupos.append("COOH")
-    if re.search(r"\bnh[23]?\b|amine|amino", t):      grupos.append("NH")
-    if re.search(r"\bc=o\b|carbonyl|ketone|aldehyde", t): grupos.append("C=O")
-    if re.search(r"\bc=c\b|aromatic|benzene", t):     grupos.append("C=C")
-    if re.search(r"\bso[23]?\b|sulfon", t):           grupos.append("SO3")
-    return "; ".join(grupos) if grupos else None
-
 def extraer_zeta(t):
     m = re.search(r"zeta[^0-9\-]{0,8}(-?[\d]+\.?[\d]*)\s*mv", t)
     return float(m.group(1)) if m else None
@@ -634,7 +618,6 @@ df_inc["analitos"]       = df_inc["texto"].apply(detect_analitos)
 df_inc["phpzc"]          = df_inc["texto"].apply(extraer_phpzc)
 df_inc["bet_m2g"]        = df_inc["texto"].apply(extraer_bet)
 df_inc["pore_nm"]        = df_inc["texto"].apply(extraer_poro)
-df_inc["grupos_func"]    = df_inc["texto"].apply(detect_grupos)
 df_inc["zeta_mv"]        = df_inc["texto"].apply(extraer_zeta)
 df_inc["ph_operacional"] = df_inc["texto"].apply(extraer_ph_op)
 df_inc["dosis_g_l"]      = df_inc["texto"].apply(extraer_dosis)
@@ -650,11 +633,9 @@ print(f"  OK  Variables extraidas en articulos incluidos:")
 print(f"      Analito detectado      : {df_inc['analitos'].notna().sum():>6,}")
 print(f"      pHpzc                  : {df_inc['phpzc'].notna().sum():>6,}")
 print(f"      BET (m2/g)             : {df_inc['bet_m2g'].notna().sum():>6,}")
-print(f"      Grupos funcionales     : {df_inc['grupos_func'].notna().sum():>6,}")
 print(f"      pH operacional         : {df_inc['ph_operacional'].notna().sum():>6,}")
 print(f"      Dosis (g/L)            : {df_inc['dosis_g_l'].notna().sum():>6,}")
 print(f"      Tipo matriz real/sint  : {df_inc['tipo_matriz'].notna().sum():>6,}")
-print(f"      Ciclos regeneracion    : {df_inc['ciclos_regen'].notna().sum():>6,}")
 print(f"      qmax (mg/g)            : {df_inc['qmax_mg_g'].notna().sum():>6,}")
 print(f"      % remocion             : {df_inc['remocion_pct'].notna().sum():>6,}")
 print(f"      Isoterma               : {df_inc['isoterma'].notna().sum():>6,}")
