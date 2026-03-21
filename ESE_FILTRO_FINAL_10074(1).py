@@ -1,47 +1,52 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-SCREENING BIBLIOGRÁFICO — REVISIÓN SISTEMÁTICA CON METAANÁLISIS
-Bioadsorbentes frente a antibióticos y hormonas en medios acuosos
+SCREENING BIBLIOGRAFICO — REVISION SISTEMATICA
+Bioadsorbentes frente a antibioticos y hormonas en medios acuosos
+VERSION 2 — Filtro estricto: pH + qmax + % remocion (max 85-90 articulos)
 =============================================================================
 
 INSTALAR (una sola vez en la terminal):
     pip install rispy pandas numpy scikit-learn unidecode tqdm pycountry
 
 EJECUTAR:
-    python screening_final.py
+    python screening_final_v2.py
 
 OUTPUTS en carpeta "output/":
-    01_todos_los_articulos.csv       → Base completa con etiqueta y razón
-    02_prisma_flujo.csv              → Conteos para diagrama PRISMA
-    03_por_anio.csv                  → Publicaciones por año
-    04_por_pais_continente.csv       → País y continente
-    05_por_revista.csv               → Ranking de revistas
-    06_revision_vs_investigacion.csv → Revisiones vs originales
-    07_antibioticos_adsorbentes.csv  → Analito + adsorbente + autor
-    08_variables_fisicoquimicas.csv  → pHpzc, BET, pH op., dosis, matriz...
-    09_datos_cuantitativos.csv       → qmax, remoción, isoterma, cinética
-    10_bibliometrico.csv             → Todo junto para bibliometrix en R
+    01_todos_los_articulos.csv        Base completa con etiqueta y razon
+    01b_prioridad_baja_ver.csv        Articulos de prioridad baja
+    02_prisma_flujo.csv               Conteos para diagrama PRISMA
+    03_por_anio.csv                   Publicaciones por anio
+    04_por_pais_continente.csv        Pais y continente
+    05_por_revista.csv                Ranking de revistas
+    06_revision_vs_investigacion.csv  Revisiones vs originales
+    07_antibioticos_adsorbentes.csv   Analito + adsorbente + autor
+    08_variables_fisicoquimicas.csv   pHpzc, BET, pH op., dosis, matriz...
+    09_datos_cuantitativos.csv        qmax, remocion, isoterma, cinetica
+    09b_analisis_triple.csv      *** NUEVO: solo articulos con pH+qmax+%rem
+    10_bibliometrico.csv              Todo junto para bibliometrix en R
 =============================================================================
 """
 
 import os, re, sys, time, unicodedata, warnings
 import numpy as np
 import pandas as pd
-import pycountry
 import rispy
 from tqdm import tqdm
 
+# Fijar encoding UTF-8 para evitar errores en Windows
+sys.stdout.reconfigure(encoding="utf-8")
+
 warnings.filterwarnings("ignore")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CONFIGURACIÓN  ← CAMBIA SOLO ESTA LÍNEA
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# CONFIGURACION
+# =============================================================================
 RIS_FILE   = "F_biblio_zotero_29131_afterclean.ris"
 OUTPUT_DIR = "output"
 YEAR_MIN   = 2020
 YEAR_MAX   = 2025
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 t0 = time.time()
@@ -54,11 +59,11 @@ def titulo_seccion(txt):
     print(f"  {txt}")
     print("=" * 65)
 
-titulo_seccion("SCREENING — BIOADSORBENTES / CONTAMINANTES EMERGENTES")
+titulo_seccion("SCREENING — BIOADSORBENTES / CONTAMINANTES EMERGENTES v2")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# NORMALIZACIÓN (única función en todo el script)
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# NORMALIZACION
+# =============================================================================
 def norm(x) -> str:
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return ""
@@ -69,9 +74,9 @@ def norm(x) -> str:
     x = "".join(c for c in x if not unicodedata.combining(c))
     return re.sub(r"\s+", " ", x.lower().strip())
 
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # PASO 1 — CARGAR RIS
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 print(f"\n{seg()} PASO 1/9 — Cargando archivo RIS...")
 
 if not os.path.exists(RIS_FILE):
@@ -87,9 +92,9 @@ total_cargados = len(df)
 print(f"  OK  Registros cargados : {total_cargados:,}")
 print(f"      Columnas del RIS   : {list(df.columns[:12])} ...")
 
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # PASO 2 — NORMALIZAR COLUMNAS
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 print(f"\n{seg()} PASO 2/9 — Normalizando columnas...")
 
 def get_col(df_, *nombres):
@@ -127,34 +132,32 @@ print(f"  OK  Columnas normalizadas")
 print(f"      Titulo ejemplo : {str(df['title_raw'].iloc[0])[:70]}...")
 print(f"      Anios con dato : {df['year'].notna().sum():,}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASO 3 — DEDUPLICACIÓN RÁPIDA (Frecuencia de termino-IDF)
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# PASO 3 — DEDUPLICACION
+# =============================================================================
 print(f"\n{seg()} PASO 3/9 — Detectando duplicados (puede tardar 1-3 min)...")
 
-# 3A — DOI exacto
-tiene_doi   = df["doi_norm"].str.len() > 0
+tiene_doi = df["doi_norm"].str.len() > 0
 df["dup_doi"] = False
 df.loc[tiene_doi, "dup_doi"] = df.loc[tiene_doi].duplicated(subset=["doi_norm"], keep="first")
 n_dup_doi = int(df["dup_doi"].sum())
 print(f"  OK  Duplicados por DOI exacto    : {n_dup_doi:,}")
 
-# 3B — Titulo similar (TF-IDF coseno — 100x más rápido que loop fuzzy)
 df["dup_fuzzy"] = False
-n_dup_fuzzy   = 0
+n_dup_fuzzy = 0
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.metrics.pairwise import cosine_similarity
 
     cand = df[~df["dup_doi"]].copy()
-    cand["year_bucket"]   = cand["year"].fillna(-1).astype(int)
-    cand["titulo_corto"]  = df["title_raw"].apply(lambda x: " ".join(norm(x).split()[:12]))
+    cand["year_bucket"]  = cand["year"].fillna(-1).astype(int)
+    cand["titulo_corto"] = df["title_raw"].apply(lambda x: " ".join(norm(x).split()[:12]))
 
     dup_idx = set()
     for ano in tqdm(sorted(cand["year_bucket"].unique()),
                     desc="      Comparando titulos", ncols=65):
-        mask   = cand["year_bucket"].isin([ano - 1, ano, ano + 1])
-        grupo  = cand[mask]
+        mask  = cand["year_bucket"].isin([ano - 1, ano, ano + 1])
+        grupo = cand[mask]
         if len(grupo) < 2:
             continue
         titulos = grupo["titulo_corto"].tolist()
@@ -186,9 +189,9 @@ except ImportError:
 df_base = df[~(df["dup_doi"] | df["dup_fuzzy"])].copy()
 print(f"  OK  Registros unicos             : {len(df_base):,}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASO 4 — KEYWORDS, SCORING Y CLASIFICACIÓN
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# PASO 4 — KEYWORDS, SCORING Y CLASIFICACION
+# =============================================================================
 print(f"\n{seg()} PASO 4/9 — Aplicando criterios de inclusion/exclusion...")
 
 KW_OBJETIVO = [
@@ -214,13 +217,19 @@ KW_OBJETIVO = [
     "endocrine disrupting","endocrine disruptor",
     "disruptor endocrino","disruptores endocrinos",
 ]
+
 KW_AGUA = [
-    "water","wastewater","waste water","agua","aguas",
-    "agua residual","aguas residuales","groundwater",
+
+    "water","aqueous","aqueous solution","aqueous media",
+    "wastewater","waste water",
+    "agua","aguas","agua residual","aguas residuales",
+    "groundwater","surface water","river water","lake water",
     "drinking water","sewage","wwtp","wastewater treatment plant",
     "industrial wastewater","hospital wastewater","municipal wastewater",
-    "synthetic wastewater","tratamiento de aguas",
+    "synthetic wastewater","tratamiento de aguas","solucion acuosa",
+    "medio acuoso","effluent","efluente",
 ]
+
 KW_ADSORCION = [
     "adsorption","adsorbent","adsorcion","adsorbente",
     "sorption","biosorption","biosorcion",
@@ -240,48 +249,29 @@ KW_ADSORCION = [
     "surface area","area superficial","pore size","pore volume",
     "ftir","xps","regeneration","reusability","desorption",
 ]
-# Expresiones regulares para pH, qmax y % de remoción
-KW_CUANTITATIVOS = [
-    "pH",              # pH
-    "qmax",            # qmax (capacidad máxima de adsorción)
-    "adsorption capacity",  # Capacidad de adsorción (término común)
-    "removal efficiency",  # Eficiencia de remoción
-    "removal",         # Remoción (genérico)
-    "% removal",       # Porcentaje de remoción
-    "capacity",        # Capacidad de adsorción
-    "mg/g",            # Unidad de medida común en adsorción
-    "qe",              # Carga adsorbida
-    "adsorption rate"  # Tasa de adsorción
-]
+
 KW_EXCL_CONTAM = [
     "pfas","perfluoro","perfluorinated",
-    # pesticidas — solo si son el foco PRINCIPAL
     "pesticide removal","pesticides adsorption","herbicide removal",
-    # metales pesados — solo si son el foco, no si son dopantes
     "heavy metal removal","lead removal","cadmium removal",
     "mercury removal","arsenic removal","chromium removal",
-    # microplásticos
     "microplastic removal","microplastics adsorption",
-    # colorantes — muy frecuente en adsorción pero fuera de foco
     "methylene blue removal","rhodamine removal",
     "dye removal","dye adsorption",
-    # petróleo
     "oil spill","crude oil removal",
 ]
+
 KW_EXCL_ESTUDIO = [
-    # sensores — solo detección sin remoción
     "electrochemical sensor","optical sensor","fluorescent sensor",
     "biosensor for detection","colorimetric sensor",
-    # biomédico puro
     "drug delivery","nanocarrier","controlled release",
     "pharmacokinetic","clinical trial","animal model",
     "cell line","in vitro cytotoxicity",
-    # genética / resistencia antimicrobiana (diferente a remoción)
     "antimicrobial resistance gene","16s rrna","qpcr","integron",
-    # degradación sin adsorción
     "photocatalytic degradation only","fenton degradation",
     "electrochemical oxidation","ozonation",
 ]
+
 KW_EXCL_DOC = [
     "conference","proceedings","conference paper",
     "editorial","letter","short communication",
@@ -292,7 +282,6 @@ KW_EXCL_DOC = [
 def make_rx(lista):
     esc = [re.escape(norm(k)) for k in lista if k.strip()]
     return re.compile(r"(" + "|".join(esc) + r")", re.IGNORECASE)
-    
 
 RX_OBJ   = make_rx(KW_OBJETIVO)
 RX_AGU   = make_rx(KW_AGUA)
@@ -300,11 +289,36 @@ RX_ADS   = make_rx(KW_ADSORCION)
 RX_EXC_C = make_rx(KW_EXCL_CONTAM)
 RX_EXC_E = make_rx(KW_EXCL_ESTUDIO)
 RX_EXC_D = make_rx(KW_EXCL_DOC)
-# Crear la expresión regular para buscar las palabras clave de datos cuantitativos
-RX_CUANTITATIVOS = make_rx(KW_CUANTITATIVOS)
 
 def hits(r, t): return len(r.findall(t)) if t else 0
 def flag(r, t): return 1 if (t and r.search(t)) else 0
+
+# ── Patrones para los 3 datos OBLIGATORIOS (pH + qmax + % remocion) ──────────
+# Detectan presencia en el abstract aunque no extraigan el valor exacto
+RX_FLAG_PH = re.compile(
+    r"(?:optimum|optimal|at|best)\s*ph\s*[=:]?\s*[\d]+"
+    r"|ph\s*[=:]\s*[\d]+"
+    r"|ph\s*[\d]+\.?[\d]*\s*(?:was|is|were|of)"
+    r"|ph\s*value\s*of\s*[\d]+"
+    r"|\bat\s*ph\s*[\d]+"
+    r"|ph\s*(?:ranging|range|between|from)\s*[\d]",
+    re.IGNORECASE
+)
+RX_FLAG_QMAX = re.compile(
+    r"qmax|q\s*max|q_?m\b"
+    r"|maximum\s*adsorption\s*capacity"
+    r"|adsorption\s*capacity\s*of\s*[\d]"
+    r"|[\d]+\.?[\d]*\s*mg\s*/\s*g"
+    r"|[\d]+\.?[\d]*\s*mg\s*g[^a-z]{0,3}1",
+    re.IGNORECASE
+)
+RX_FLAG_REM = re.compile(
+    r"[\d]{1,3}\.?[\d]*\s*%\s*(?:removal|remocion|eliminacion|efficiency)"
+    r"|(?:removal|remocion|elimination)\s*(?:efficiency\s*of|of|rate\s*of)?\s*[\d]{1,3}\.?[\d]*\s*%"
+    r"|(?:achieved|reached|obtained)\s*[\d]{1,3}\.?[\d]*\s*%"
+    r"|(?:up\s*to|about|approximately)\s*[\d]{1,3}\.?[\d]*\s*%\s*removal",
+    re.IGNORECASE
+)
 
 print("      Contando coincidencias...")
 df_base["hits_obj"] = df_base["texto"].apply(lambda t: hits(RX_OBJ, t))
@@ -313,43 +327,77 @@ df_base["hits_ads"] = df_base["texto"].apply(lambda t: hits(RX_ADS, t))
 df_base["exc_c"]    = df_base["texto"].apply(lambda t: flag(RX_EXC_C, t))
 df_base["exc_e"]    = df_base["texto"].apply(lambda t: flag(RX_EXC_E, t))
 df_base["exc_d"]    = df_base["texto"].apply(lambda t: flag(RX_EXC_D, t))
-# Aplicar filtro para buscar pH, qmax, % de remoción en el texto del artículo
-df_base["hits_cuantitativos"] = df_base["texto"].apply(lambda t: hits(RX_CUANTITATIVOS, t))
-# Marcar los artículos que no contienen estos términos como "EXCLUIDO"
-df_base["etiqueta"] = df_base.apply(lambda r: "EXCLUIDO" if r["hits_cuantitativos"] == 0 else r["etiqueta"], axis=1)
-# Filtrar los artículos que tienen al menos uno de los términos cuantitativos (pH, qmax, % remoción)
-df_base["pasa_cuantitativos"] = df_base["hits_cuantitativos"] > 0
 df_base["anio_ok"]  = df_base["year"].between(YEAR_MIN, YEAR_MAX, inclusive="both").fillna(False)
 
+# Flags de los 3 datos clave en el abstract
+df_base["flag_ph"]   = df_base["texto"].apply(lambda t: 1 if t and RX_FLAG_PH.search(t) else 0)
+df_base["flag_qmax"] = df_base["texto"].apply(lambda t: 1 if t and RX_FLAG_QMAX.search(t) else 0)
+df_base["flag_rem"]  = df_base["texto"].apply(lambda t: 1 if t and RX_FLAG_REM.search(t) else 0)
+df_base["triple_flag"] = df_base["flag_ph"] + df_base["flag_qmax"] + df_base["flag_rem"]
+
+n_triple = int((df_base["triple_flag"] == 3).sum())
+print(f"      Con pH en abstract        : {df_base['flag_ph'].sum():,}")
+print(f"      Con qmax en abstract      : {df_base['flag_qmax'].sum():,}")
+print(f"      Con %rem en abstract      : {df_base['flag_rem'].sum():,}")
+print(f"      Con los 3 simultaneos     : {n_triple:,}")
+
+# Score con bonus por datos cuantitativos presentes
 df_base["score"] = (
-    df_base["hits_obj"] * 4 + df_base["hits_agu"] * 2 + df_base["hits_ads"] * 3
-    - df_base["exc_c"] * 8 - df_base["exc_e"] * 6 - df_base["exc_d"] * 6
-)
-df_base["pasa_core"] = (
-    (df_base["hits_obj"] > 0) & (df_base["hits_agu"] > 0) &
-    (df_base["hits_ads"] > 0) & (df_base["anio_ok"] == True)
+    df_base["hits_obj"] * 4 +
+    df_base["hits_agu"] * 2 +
+    df_base["hits_ads"] * 3 +
+    df_base["flag_ph"]   * 4 +
+    df_base["flag_qmax"] * 5 +
+    df_base["flag_rem"]  * 4 -
+    df_base["exc_c"] * 10 -
+    df_base["exc_e"] * 8 -
+    df_base["exc_d"] * 8
 )
 
+# pasa_core: criterios AND minimos estrictos
+df_base["pasa_core"] = (
+    (df_base["hits_obj"] >= 1) &
+    (df_base["hits_ads"] >= 2) &    # bajé de 3 a 2
+    (df_base["anio_ok"] == True)
+)
+
+# ── DIAGNÓSTICO — borra después ───────────────────────────────────────────────
+triple = df_base[df_base["triple_flag"] == 3]
+print(f"\n  De los 49 con triple_flag==3:")
+print(f"    Pasan pasa_core        : {triple['pasa_core'].sum()}")
+print(f"    Fallan hits_obj >= 2   : {(triple['hits_obj'] < 2).sum()}")
+print(f"    Fallan hits_agu >= 1   : {(triple['hits_agu'] < 1).sum()}")
+print(f"    Fallan hits_ads >= 3   : {(triple['hits_ads'] < 3).sum()}")
+print(f"    Fallan anio_ok         : {(~triple['anio_ok']).sum()}")
+# ─────────────────────────────────────────────────────────────────────────────
 
 def razones(r):
     R = []
-    if not r["anio_ok"]:     R.append(f"EXCL: anio fuera de {YEAR_MIN}-{YEAR_MAX}")
-    if r["exc_d"]:           R.append("EXCL: tipo documental (conferencia/patente/erratum)")
-    if r["exc_c"]:           R.append("EXCL: contaminante fuera de foco (pesticida/metal/colorante)")
-    if r["exc_e"]:           R.append("EXCL: tipo de estudio (sensor/biomedico/genetica/AOP)")
-    if r["hits_obj"] == 0:   R.append("EXCL: no menciona antibiotico ni hormona")
-    if r["hits_agu"] == 0:   R.append("EXCL: no menciona medio acuoso")
-    if r["hits_ads"] == 0:   R.append("EXCL: no menciona adsorcion ni adsorbente")
-    if not R and r["pasa_core"]: R.append("INCLUIDO: cumple todos los criterios")
+    if not r["anio_ok"]:           R.append(f"EXCL: anio fuera de {YEAR_MIN}-{YEAR_MAX}")
+    if r["exc_d"]:                 R.append("EXCL: tipo documental (conferencia/patente/erratum)")
+    if r["exc_c"]:                 R.append("EXCL: contaminante fuera de foco (pesticida/metal/colorante)")
+    if r["exc_e"]:                 R.append("EXCL: tipo de estudio (sensor/biomedico/genetica/AOP)")
+    if r["hits_obj"] < 2:          R.append("EXCL: pocas menciones de antibiotico/hormona (<2)")
+    if r["hits_agu"] == 0:         R.append("EXCL: no menciona medio acuoso")
+    if r["hits_ads"] < 3:          R.append("EXCL: pocas menciones de adsorcion (<3)")
+    if r["triple_flag"] < 2:       R.append("EXCL: abstract no reporta al menos 2 de (pH, qmax, %rem)")
+    if not R and r["pasa_core"]:   R.append("INCLUIDO: cumple todos los criterios PICOS")
     return " | ".join(R) if R else "REVISAR MANUALMENTE"
 
+
 def etiquetar(r):
-    if r["exc_d"] or r["exc_c"]:            return "EXCLUIDO"
-    if r["exc_e"] and r["score"] <= 2:      return "EXCLUIDO"
-    if not r["anio_ok"]:                    return "EXCLUIDO"
-    if r["pasa_core"] and r["score"] >= 12: return "INCLUIDO_ALTA"
-    if r["pasa_core"] and r["score"] >= 7:  return "INCLUIDO_MEDIA"
-    if r["score"] >= 3:                     return "PRIORIDAD_BAJA"
+    # Exclusiones duras
+    if r["exc_d"] or r["exc_c"]:        return "EXCLUIDO"
+    if not r["anio_ok"]:                return "EXCLUIDO"
+    if r["exc_e"] and r["score"] <= 6:  return "EXCLUIDO"
+
+    tiene_3 = r["triple_flag"] == 3
+    tiene_2 = r["triple_flag"] >= 2
+
+    # INCLUIDO ALTA: pasa_core + los 3 datos + score alto
+    if r["pasa_core"] and tiene_3:                      return "INCLUIDO_ALTA"
+    if r["pasa_core"] and tiene_2 and r["score"] >= 105: return "INCLUIDO_MEDIA"
+    if r["pasa_core"] and r["score"] >= 10:             return "PRIORIDAD_BAJA"
     return "EXCLUIDO"
 
 df_base["etiqueta"] = df_base.apply(etiquetar, axis=1)
@@ -364,13 +412,28 @@ for etiq, n in dist.items():
 
 df_inc = df_base[df_base["etiqueta"].isin(["INCLUIDO_ALTA", "INCLUIDO_MEDIA"])].copy()
 print(f"\n      >>> Articulos incluidos (alta + media): {len(df_inc):,} <<<")
-# Verificar cuántos artículos tienen datos cuantitativos y cómo están etiquetados
-print(f"Artículos con datos cuantitativos: {df_base['pasa_cuantitativos'].sum()}")
-print(f"Etiquetas asignadas: {df_base['etiqueta'].value_counts()}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASO 5 — PAÍS Y CONTINENTE
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# diagnóstico — borra después de calibrar
+# =============================================================================
+triple = df_base[df_base["triple_flag"] == 3]
+print("\n  Distribución de scores en artículos con triple_flag==3:")
+print(triple["score"].describe())
+print(triple["score"].value_counts().sort_index())
+
+dist = df_base["etiqueta"].value_counts()
+mx   = dist.max()
+print("  OK  Clasificacion completada:")
+for etiq, n in dist.items():
+    barra = "=" * (n * 28 // mx)
+    print(f"      {etiq:<22} {n:>7,}  {barra}")
+
+df_inc = df_base[df_base["etiqueta"].isin(["INCLUIDO_ALTA", "INCLUIDO_MEDIA"])].copy()
+print(f"\n      >>> Articulos incluidos (alta + media): {len(df_inc):,} <<<")
+
+# =============================================================================
+# PASO 5 — PAIS Y CONTINENTE (version rapida, sin pycountry)
+# =============================================================================
 print(f"\n{seg()} PASO 5/9 — Detectando pais y continente...")
 
 CONTINENTE = {
@@ -393,38 +456,50 @@ CONTINENTE = {
     "australia":"Oceania","new zealand":"Oceania",
 }
 
-lista_paises = list(
-    {norm(c.name) for c in pycountry.countries} |
-    {norm(c.official_name) for c in pycountry.countries if hasattr(c, "official_name")}
-)
-
-ALIAS_P = {
-    "usa":"united states","u.s.a":"united states","u.s":"united states",
-    "uk":"united kingdom","england":"united kingdom",
-    "scotland":"united kingdom","wales":"united kingdom",
-    "brasil":"brazil","espana":"spain",
-    "pr china":"china","peoples republic of china":"china",
-    "south korea":"korea republic of","vietnam":"viet nam",
+PAISES_RAPIDO = {
+    "china": "china", "india": "india", "iran": "iran",
+    "korea": "korea republic of", "south korea": "korea republic of",
+    "japan": "japan", "pakistan": "pakistan",
+    "taiwan": "taiwan", "thailand": "thailand", "malaysia": "malaysia",
+    "indonesia": "indonesia", "vietnam": "viet nam", "viet nam": "viet nam",
+    "bangladesh": "bangladesh", "saudi arabia": "saudi arabia",
+    "iraq": "iraq", "jordan": "jordan", "sri lanka": "sri lanka",
+    "united states": "united states", "usa": "united states", "u.s.a": "united states",
+    "canada": "canada", "mexico": "mexico",
+    "brazil": "brazil", "brasil": "brazil", "colombia": "colombia",
+    "argentina": "argentina", "chile": "chile", "peru": "peru",
+    "ecuador": "ecuador", "venezuela": "venezuela",
+    "germany": "germany", "france": "france", "spain": "spain",
+    "espana": "spain", "italy": "italy",
+    "united kingdom": "united kingdom", "england": "united kingdom", "uk": "united kingdom",
+    "poland": "poland", "netherlands": "netherlands", "sweden": "sweden",
+    "portugal": "portugal", "greece": "greece", "belgium": "belgium",
+    "romania": "romania", "hungary": "hungary", "denmark": "denmark",
+    "switzerland": "switzerland", "austria": "austria", "norway": "norway",
+    "finland": "finland", "turkey": "turkey", "czech republic": "czech republic",
+    "egypt": "egypt", "nigeria": "nigeria", "south africa": "south africa",
+    "morocco": "morocco", "ethiopia": "ethiopia", "ghana": "ghana",
+    "kenya": "kenya", "algeria": "algeria",
+    "australia": "australia", "new zealand": "new zealand",
 }
 
 def detectar_pais(texto):
     t = norm(texto)
-    if not t: return None
-    for a, e in ALIAS_P.items():
-        t = t.replace(a, e)
-    encontrados = [p for p in lista_paises
-                   if re.search(r"\b" + re.escape(p) + r"\b", t)]
-    if not encontrados:
+    if not t:
         return None
-    # devuelve el país que aparece más veces (primer autor generalmente)
-    return max(set(encontrados), key=encontrados.count)
+    # Orden de longitud descendente para evitar falsos positivos
+    for nombre, estandar in sorted(PAISES_RAPIDO.items(), key=lambda x: -len(x[0])):
+        if re.search(r"\b" + re.escape(nombre) + r"\b", t):
+            return estandar
+    return None
 
 def txt_afil(fila):
     partes = []
-    for col in ["affiliations","addresses","address","notes","journal_name"]:
+    for col in ["affiliations", "addresses", "address", "notes", "journal_name"]:
         if col in fila.index and fila[col] is not None:
             v = fila[col]
-            if isinstance(v, list): v = " ".join(str(x) for x in v)
+            if isinstance(v, list):
+                v = " ".join(str(x) for x in v)
             partes.append(str(v))
     return " | ".join(partes)
 
@@ -443,17 +518,21 @@ for p, n in df_inc["pais"].value_counts().head(10).items():
     cont = CONTINENTE.get(str(p), "?")
     print(f"        {str(p):<30} {n:>5}  ({cont})")
 
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # PASO 6 — FAMILIA DE ADSORBENTE
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 print(f"\n{seg()} PASO 6/9 — Detectando familia de adsorbente...")
 
 FAMILIAS = {
-    "Carbon activado":   ["activated carbon","carbon activado","granular activated carbon","powdered activated carbon","pac","gac"],
+    "Carbon activado":   ["activated carbon","carbon activado","granular activated carbon",
+                          "powdered activated carbon","pac","gac"],
     "Biochar":           ["biochar","biocarbon","char","carbonized biomass","pirolisis","pirolizado"],
-    "MOF":               ["mof","metal-organic framework","metal organic framework","zeolitic imidazolate","zif"],
-    "Nanocompuesto":     ["nanocomposite","nano-composite","nanoparticle","nanomaterial","graphene oxide","carbon nanotube","cnt"],
-    "Biopolimero":       ["biopolymer","chitosan","quitosano","alginate","alginato","cellulose","celulosa","starch","almidon","lignin","lignina"],
+    "MOF":               ["mof","metal-organic framework","metal organic framework",
+                          "zeolitic imidazolate","zif"],
+    "Nanocompuesto":     ["nanocomposite","nano-composite","nanoparticle","nanomaterial",
+                          "graphene oxide","carbon nanotube","cnt"],
+    "Biopolimero":       ["biopolymer","chitosan","quitosano","alginate","alginato",
+                          "cellulose","celulosa","starch","almidon","lignin","lignina"],
     "Arcilla/Zeolita":   ["clay","zeolite","zeolita","bentonite","montmorillonite"],
     "Hidrogel/Polimero": ["hydrogel","polymer","polimero","resin","resina"],
 }
@@ -470,9 +549,9 @@ print("  OK  Adsorbentes en articulos incluidos:")
 for a, n in df_inc["adsorbente"].value_counts().items():
     print(f"        {str(a):<22} : {n:>5}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASO 7 — REVISIÓN vs INVESTIGACIÓN ORIGINAL
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# PASO 7 — REVISION vs INVESTIGACION ORIGINAL
+# =============================================================================
 print(f"\n{seg()} PASO 7/9 — Clasificando revision vs investigacion original...")
 
 KW_REVIEW = [
@@ -484,7 +563,7 @@ RX_REVIEW = make_rx(KW_REVIEW)
 
 def es_revision(fila):
     tipo = norm(str(fila.get("type_raw", "")))
-    if any(r in tipo for r in ["review","rev"]):
+    if any(r in tipo for r in ["review", "rev"]):
         return "Revision"
     if RX_REVIEW.search(fila.get("texto", "")):
         return "Revision"
@@ -495,14 +574,13 @@ rev_dist = df_inc["tipo_articulo"].value_counts()
 print("  OK  Tipo de articulo:")
 for t, n in rev_dist.items():
     print(f"        {t:<28} : {n:>5}")
-print("      (Revisiones = tus ANTECEDENTES para la introduccion)")
+print("      (Revisiones =  ANTECEDENTES)")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASO 8 — ANALITOS + VARIABLES FISICOQUÍMICAS + DATOS CUANTITATIVOS
-# ─────────────────────────────────────────────────────────────────────────────
-print(f"\n{seg()} PASO 8/9 — Extrayendo analitos y variables (fisicoquimicas + cuantitativas)...")
+# =============================================================================
+# PASO 8 — ANALITOS + VARIABLES FISICOQUIMICAS + DATOS CUANTITATIVOS
+# =============================================================================
+print(f"\n{seg()} PASO 8/9 — Extrayendo analitos y variables...")
 
-# Analitos específicos
 ANALITOS = {
     "Tetraciclina":          ["tetracycline","tetraciclina"],
     "Oxitetraciclina":       ["oxytetracycline","oxitetraciclina"],
@@ -536,17 +614,28 @@ def detect_analitos(texto):
                 break
     return "; ".join(encontrados) if encontrados else None
 
-# Variables fisicoquímicas y estructurales
 def extraer_phpzc(t):
-    for patron in [r"ph[pz][zc][^0-9]{0,8}([\d]+\.?[\d]*)",
-                   r"point of zero charge[^0-9]{0,8}([\d]+\.?[\d]*)",
-                   r"pzc[^0-9]{0,8}([\d]+\.?[\d]*)"]:
+    patrones = [
+        r"ph\s*pzc\s*(?:of|was|is|=|:)?\s*(?:about|approximately|around)?\s*([\d]+\.?[\d]*)",
+        r"ph\s*pcc\s*(?:of|was|is|=|:)?\s*([\d]+\.?[\d]*)",
+        r"ph\s*zpc\s*(?:of|was|is|=|:)?\s*([\d]+\.?[\d]*)",
+        r"pzc\s*(?:of|was|is|=|at|:)?\s*(?:about|approximately)?\s*([\d]+\.?[\d]*)",
+        r"point\s*of\s*zero\s*charge\s*(?:of|was|is|=|at|:)?\s*(?:about|approximately)?\s*([\d]+\.?[\d]*)",
+        r"zero\s*point\s*(?:of\s*)?charge\s*(?:of|was|is|=|at|:)?\s*([\d]+\.?[\d]*)",
+        r"isoelectric\s*point\s*(?:of|was|is|=|at|:)?\s*([\d]+\.?[\d]*)",
+        r"ph[zp]pc\s*(?:of|was|is|=|:)?\s*([\d]+\.?[\d]*)",
+        r"(?:surface\s*charge|charge\s*neutrality)\s*(?:at|of)?\s*ph\s*([\d]+\.?[\d]*)",
+        r"electrically\s*neutral\s*at\s*ph\s*([\d]+\.?[\d]*)",
+    ]
+    for patron in patrones:
         m = re.search(patron, t)
-        if m: return float(m.group(1))
+        if m:
+            val = float(m.group(1))
+            if 0.0 <= val <= 14.0:
+                return val
     return None
 
 def extraer_bet(t):
-    # Busca BET explícito o surface area con valor numérico razonable (1-3000 m2/g)
     for patron in [
         r"bet\s*(?:surface\s*area)?[^0-9]{0,10}([\d]+\.?[\d]*)\s*m[2²]",
         r"surface\s*area[^0-9]{0,10}([\d]+\.?[\d]*)\s*m[2²]\s*/\s*g",
@@ -555,7 +644,7 @@ def extraer_bet(t):
         m = re.search(patron, t)
         if m:
             val = float(m.group(1))
-            if 0.1 <= val <= 3000:  # rango físicamente razonable
+            if 0.1 <= val <= 3000:
                 return val
     return None
 
@@ -574,11 +663,14 @@ def extraer_ph_op(t):
         r"ph\s*(?:of\s*)?(?:optimum|optimal)\s*(?:adsorption|removal)[^0-9]{0,8}([\d]+\.?[\d]*)",
         r"maximum\s*(?:removal|adsorption)\s*(?:at|was\s*achieved\s*at)\s*ph\s*([\d]+\.?[\d]*)",
         r"best\s*(?:removal|adsorption)\s*(?:at|was)\s*ph\s*([\d]+\.?[\d]*)",
+        r"\bat\s*ph\s*[=:]?\s*([\d]+\.?[\d]*)",
+        r"ph\s*[=:]\s*([\d]+\.?[\d]*)",
+        r"ph\s*value\s*of\s*([\d]+\.?[\d]*)",
     ]:
         m = re.search(patron, t)
         if m:
             val = float(m.group(1))
-            if 1.0 <= val <= 14.0:  # rango físicamente válido
+            if 1.0 <= val <= 14.0:
                 return val
     return None
 
@@ -598,22 +690,43 @@ def extraer_regen(t):
     return int(m.group(1)) if m else None
 
 def extraer_qmax(t):
-    m = re.search(r"qmax[^0-9]{0,10}([\d]+\.?[\d]*)", t)
-    return float(m.group(1)) if m else None
+    patrones = [
+        r"qmax[^0-9]{0,10}([\d]+\.?[\d]*)",
+        r"q\s*max[^0-9]{0,10}([\d]+\.?[\d]*)",
+        r"maximum\s*adsorption\s*capacity[^0-9]{0,15}([\d]+\.?[\d]*)\s*mg",
+        r"adsorption\s*capacity\s*of\s*([\d]+\.?[\d]*)\s*mg",
+        r"([\d]+\.?[\d]*)\s*mg\s*/\s*g\s*(?:for|of|with|was|is)",
+    ]
+    for patron in patrones:
+        m = re.search(patron, t)
+        if m:
+            try:
+                val = float(m.group(1))
+                if 0.1 <= val <= 5000:
+                    return val
+            except (ValueError, IndexError):
+                continue
+    return None
 
-def validar_numero(valor):
-    try:
-        return float(valor)
-    except ValueError:
-        return None  # Si el valor no es un número, lo descartamos.
-
-def extraer_qmax(t):
-    m = re.search(r"qmax[^0-9]{0,10}([\d]+\.?[\d]*)", t)
-    return validar_numero(m.group(1)) if m else None 
-    
 def extraer_remocion(t):
-    m = re.search(r"([\d]{1,3}\.?[\d]*)\s*%\s*(removal|remocion|remocao|eliminacion)", t)
-    return float(m.group(1)) if m else None
+    patrones = [
+        r"([\d]{1,3}\.?[\d]*)\s*%\s*(?:removal|remocion|remocao|eliminacion)",
+        r"(?:removal|remocion)\s*(?:of|efficiency)?\s*([\d]{1,3}\.?[\d]*)\s*%",
+        r"(?:achieved|reached|obtained)\s*([\d]{1,3}\.?[\d]*)\s*%",
+        r"(?:up\s*to|about)\s*([\d]{1,3}\.?[\d]*)\s*%\s*removal",
+    ]
+    for patron in patrones:
+        m = re.search(patron, t)
+        if m:
+            for g in m.groups():
+                if g:
+                    try:
+                        val = float(g)
+                        if 10.0 <= val <= 100.0:
+                            return val
+                    except ValueError:
+                        continue
+    return None
 
 def detectar_isoterma(t):
     if "langmuir" in t and "freundlich" in t: return "Langmuir + Freundlich"
@@ -625,7 +738,7 @@ def detectar_isoterma(t):
 
 def detectar_cinetica(t):
     pso = bool(re.search(r"pseudo.second.order|pso\b", t))
-    pfo = bool(re.search(r"pseudo.first.order|pfo\b",  t))
+    pfo = bool(re.search(r"pseudo.first.order|pfo\b", t))
     if pso and pfo: return "PFO + PSO"
     if pso: return "PSO"
     if pfo: return "PFO"
@@ -638,12 +751,23 @@ def tiene_cuant(t):
         r"pseudo.second.order", r"pseudo.first.order",
     ])
 
-# ── Aplicar todas las funciones a df_inc ─────────────────────────────────────
 print("      Aplicando extraccion a articulos incluidos...")
 df_inc["analitos"]       = df_inc["texto"].apply(detect_analitos)
 df_inc["phpzc"]          = df_inc["texto"].apply(extraer_phpzc)
 df_inc["bet_m2g"]        = df_inc["texto"].apply(extraer_bet)
 df_inc["pore_nm"]        = df_inc["texto"].apply(extraer_poro)
+df_inc["grupos_func"]    = df_inc["texto"].apply(
+    lambda t: "; ".join(
+        g for g, p in [
+            ("OH",   r"\boh\b|hydroxyl"),
+            ("COOH", r"\bcooh\b|carboxyl"),
+            ("NH",   r"\bnh[23]?\b|amine|amino"),
+            ("C=O",  r"\bc=o\b|carbonyl|ketone|aldehyde"),
+            ("C=C",  r"\bc=c\b|aromatic|benzene"),
+            ("SO3",  r"\bso[23]?\b|sulfon"),
+        ] if re.search(p, t)
+    ) or None
+)
 df_inc["zeta_mv"]        = df_inc["texto"].apply(extraer_zeta)
 df_inc["ph_operacional"] = df_inc["texto"].apply(extraer_ph_op)
 df_inc["dosis_g_l"]      = df_inc["texto"].apply(extraer_dosis)
@@ -655,6 +779,13 @@ df_inc["isoterma"]       = df_inc["texto"].apply(detectar_isoterma)
 df_inc["cinetica"]       = df_inc["texto"].apply(detectar_cinetica)
 df_inc["tiene_cuant"]    = df_inc["texto"].apply(tiene_cuant)
 
+# Copiar los flags del PASO 4 a df_inc
+df_inc["flag_ph"]    = df_base.loc[df_inc.index, "flag_ph"]
+df_inc["flag_qmax"]  = df_base.loc[df_inc.index, "flag_qmax"]
+df_inc["flag_rem"]   = df_base.loc[df_inc.index, "flag_rem"]
+df_inc["triple_flag"] = df_base.loc[df_inc.index, "triple_flag"]
+
+n_triple_inc = int((df_inc["triple_flag"] == 3).sum())
 print(f"  OK  Variables extraidas en articulos incluidos:")
 print(f"      Analito detectado      : {df_inc['analitos'].notna().sum():>6,}")
 print(f"      pHpzc                  : {df_inc['phpzc'].notna().sum():>6,}")
@@ -667,10 +798,11 @@ print(f"      % remocion             : {df_inc['remocion_pct'].notna().sum():>6,
 print(f"      Isoterma               : {df_inc['isoterma'].notna().sum():>6,}")
 print(f"      Cinetica               : {df_inc['cinetica'].notna().sum():>6,}")
 print(f"      Con datos cuantitativos: {df_inc['tiene_cuant'].sum():>6,}")
+print(f"      Con triple (pH+qmax+%): {n_triple_inc:>6,}  <-- para analisis")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASO 9 — EXPORTAR LOS 10 CSVs
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# PASO 9 — EXPORTAR CSVs
+# =============================================================================
 print(f"\n{seg()} PASO 9/9 — Exportando CSVs...")
 
 conteos = df_base["etiqueta"].value_counts().to_dict()
@@ -679,12 +811,13 @@ def guardar(df_, nombre, cols, descripcion=""):
     cols_ok = [c for c in cols if c in df_.columns]
     ruta = os.path.join(OUTPUT_DIR, nombre)
     df_[cols_ok].to_csv(ruta, index=False, encoding="utf-8-sig")
-    print(f"  OK  {nombre:<45} {len(df_):>7,} filas   {descripcion}")
+    print(f"  OK  {nombre:<50} {len(df_):>6,} filas   {descripcion}")
 
 # 01 — Base completa
 guardar(df_base, "01_todos_los_articulos.csv",
     ["title_raw","year","journal_raw","doi_raw","autor1",
      "etiqueta","score","razones","hits_obj","hits_agu","hits_ads",
+     "flag_ph","flag_qmax","flag_rem","triple_flag",
      "exc_c","exc_e","exc_d","anio_ok","dup_doi","dup_fuzzy"],
     "(base completa)")
 
@@ -692,25 +825,26 @@ guardar(df_base, "01_todos_los_articulos.csv",
 df_baja = df_base[df_base["etiqueta"] == "PRIORIDAD_BAJA"].copy()
 guardar(df_baja, "01b_prioridad_baja_ver.csv",
     ["title_raw","year","journal_raw","doi_raw","score","razones"],
-    "(No descartar)")
+    "(revisar manualmente)")
 
 # 02 — PRISMA
 prisma = pd.DataFrame([
-    {"etapa":"1. Registros cargados del RIS",                   "n": total_cargados},
-    {"etapa":"2. Duplicados eliminados (DOI exacto)",           "n": n_dup_doi},
-    {"etapa":"3. Duplicados eliminados (titulo similar)",       "n": n_dup_fuzzy},
-    {"etapa":"4. Registros unicos analizados",                  "n": len(df_base)},
-    {"etapa":"--- EXCLUIDOS ---",                               "n": ""},
-    {"etapa":"5. Anio fuera de rango",                         "n": int((~df_base["anio_ok"]).sum())},
-    {"etapa":"6. Tipo documental inadecuado",                  "n": int(df_base["exc_d"].sum())},
-    {"etapa":"7. Contaminante fuera de foco",                  "n": int(df_base["exc_c"].sum())},
-    {"etapa":"8. Tipo de estudio fuera de foco",               "n": int(df_base["exc_e"].sum())},
-    {"etapa":"9. Total EXCLUIDOS",                             "n": conteos.get("EXCLUIDO",0)},
-    {"etapa":"--- INCLUIDOS ---",                               "n": ""},
-    {"etapa":"10. INCLUIDOS alta relevancia",                  "n": conteos.get("INCLUIDO_ALTA",0)},
-    {"etapa":"11. INCLUIDOS media relevancia",                 "n": conteos.get("INCLUIDO_MEDIA",0)},
-    {"etapa":"12. PRIORIDAD BAJA (revisar manualmente)",       "n": conteos.get("PRIORIDAD_BAJA",0)},
-    {"etapa":"13. Con datos cuantitativos (meta-analisis)",    "n": int(df_inc["tiene_cuant"].sum())},
+    {"etapa":"1. Registros cargados del RIS",                    "n": total_cargados},
+    {"etapa":"2. Duplicados eliminados (DOI exacto)",            "n": n_dup_doi},
+    {"etapa":"3. Duplicados eliminados (titulo similar)",        "n": n_dup_fuzzy},
+    {"etapa":"4. Registros unicos analizados",                   "n": len(df_base)},
+    {"etapa":"--- EXCLUIDOS ---",                                "n": ""},
+    {"etapa":"5. Anio fuera de rango",                          "n": int((~df_base["anio_ok"]).sum())},
+    {"etapa":"6. Tipo documental inadecuado",                   "n": int(df_base["exc_d"].sum())},
+    {"etapa":"7. Contaminante fuera de foco",                   "n": int(df_base["exc_c"].sum())},
+    {"etapa":"8. Tipo de estudio fuera de foco",                "n": int(df_base["exc_e"].sum())},
+    {"etapa":"9. Total EXCLUIDOS",                              "n": conteos.get("EXCLUIDO",0)},
+    {"etapa":"--- INCLUIDOS ---",                                "n": ""},
+    {"etapa":"10. INCLUIDOS alta relevancia",                   "n": conteos.get("INCLUIDO_ALTA",0)},
+    {"etapa":"11. INCLUIDOS media relevancia",                  "n": conteos.get("INCLUIDO_MEDIA",0)},
+    {"etapa":"12. PRIORIDAD BAJA (revisar manualmente)",        "n": conteos.get("PRIORIDAD_BAJA",0)},
+    {"etapa":"13. Con datos cuantitativos (tienen_cuant)",      "n": int(df_inc["tiene_cuant"].sum())},
+    {"etapa":"14. Con triple dato pH+qmax+%rem (analisis)","n": n_triple_inc},
 ])
 guardar(prisma, "02_prisma_flujo.csv", list(prisma.columns), "(diagrama PRISMA)")
 
@@ -731,7 +865,7 @@ por_revista = (df_inc.groupby("journal_raw").size()
                .reset_index(name="n_articulos")
                .sort_values("n_articulos", ascending=False))
 por_revista["pct"] = (por_revista["n_articulos"] / len(df_inc) * 100).round(1)
-guardar(por_revista, "05_por_revista.csv", list(por_revista.columns), "(clasificar base de datos en Excel)")
+guardar(por_revista, "05_por_revista.csv", list(por_revista.columns), "(ranking de revistas)")
 
 # 06 — Revision vs investigacion
 guardar(df_inc, "06_revision_vs_investigacion.csv",
@@ -741,11 +875,10 @@ guardar(df_inc, "06_revision_vs_investigacion.csv",
 # 07 — Analitos + adsorbentes + autores
 guardar(df_inc, "07_antibioticos_adsorbentes.csv",
     ["title_raw","year","journal_raw","doi_raw","autor1",
-     "analitos","adsorbente","tipo_articulo","etiqueta","score",
-     "db_raw"],          # ← AÑADIR
+     "analitos","adsorbente","tipo_articulo","etiqueta","score","db_raw"],
     "(analito + adsorbente + autor)")
 
-# 08 — Variables fisicoquímicas completas
+# 08 — Variables fisicoquimicas completas
 guardar(df_inc, "08_variables_fisicoquimicas.csv",
     ["title_raw","year","doi_raw","autor1","analitos","adsorbente",
      "phpzc","bet_m2g","pore_nm","grupos_func","zeta_mv",
@@ -753,7 +886,7 @@ guardar(df_inc, "08_variables_fisicoquimicas.csv",
      "qmax_mg_g","remocion_pct","isoterma","cinetica"],
     "(variables fisicoquimicas y operacionales)")
 
-# 09 — Solo con datos cuantitativos
+# 09 — Con datos cuantitativos (criterio amplio)
 df_cuant = df_inc[df_inc["tiene_cuant"] == True].copy()
 guardar(df_cuant, "09_datos_cuantitativos.csv",
     ["title_raw","year","journal_raw","doi_raw","pais","adsorbente","analitos",
@@ -762,149 +895,157 @@ guardar(df_cuant, "09_datos_cuantitativos.csv",
      "etiqueta","score"],
     "(para metafor en R)")
 
+# 09B — *** NUEVO: solo articulos con pH + qmax + % remocion (analisis estricto)
+# Usa los flags del PASO 4 que son mas robustos que los extractores numericos
+df_triple = df_inc[df_inc["triple_flag"] == 3].copy()
+guardar(df_triple, "09b_analisis_triple.csv",
+    ["title_raw","year","journal_raw","doi_raw","pais","continente",
+     "autor1","authors_raw",
+     "adsorbente","analitos","tipo_articulo",
+     "qmax_mg_g","remocion_pct","ph_operacional",
+     "isoterma","cinetica","bet_m2g","dosis_g_l","tipo_matriz","ciclos_regen",
+     "phpzc","grupos_func","zeta_mv","pore_nm",
+     "flag_ph","flag_qmax","flag_rem",
+     "etiqueta","score","doi_raw","razones"],
+    "*** ARTICULOS PARA ANALISIS: pH + qmax + %rem en abstract ***")
+
 # 10 — Bibliometrico general
 guardar(df_inc, "10_bibliometrico.csv",
     ["title_raw","year","journal_raw","doi_raw",
-     "autor1","authors_raw",    # ← añadir authors_raw
+     "autor1","authors_raw",
      "pais","continente","adsorbente","analitos",
      "tipo_articulo","etiqueta","score","db_raw"],
-    "(para bibliometrix en R, autores)")
+    "(para bibliometrix en R)")
 
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # RESUMEN FINAL
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 t_total = time.time() - t0
 titulo_seccion("RESUMEN FINAL")
-print(f"  Tiempo total                  : {t_total:.0f} segundos ({t_total/60:.1f} min)")
-print(f"  Registros cargados (RIS)      : {total_cargados:>7,}")
-print(f"  Duplicados eliminados (DOI)   : {n_dup_doi:>7,}")
-print(f"  Duplicados eliminados (fuzzy) : {n_dup_fuzzy:>7,}")
-print(f"  Registros unicos analizados   : {len(df_base):>7,}")
-print(f"  ─────────────────────────────────────────────")
-print(f"  EXCLUIDOS                     : {conteos.get('EXCLUIDO',0):>7,}")
-print(f"  INCLUIDOS alta relevancia     : {conteos.get('INCLUIDO_ALTA',0):>7,}")
-print(f"  INCLUIDOS media relevancia    : {conteos.get('INCLUIDO_MEDIA',0):>7,}")
-print(f"  PRIORIDAD BAJA (revisar)      : {conteos.get('PRIORIDAD_BAJA',0):>7,}")
-print(f"  ─────────────────────────────────────────────")
-print(f"  Total incluidos               : {len(df_inc):>7,}")
-print(f"    Revisiones (antecedentes)   : {(df_inc['tipo_articulo']=='Revision').sum():>7,}")
-print(f"    Investigacion original      : {(df_inc['tipo_articulo']=='Investigacion original').sum():>7,}")
-print(f"  ─────────────────────────────────────────────")
-print(f"  Con analito detectado         : {df_inc['analitos'].notna().sum():>7,}")
-print(f"  Con pHpzc                     : {df_inc['phpzc'].notna().sum():>7,}")
-print(f"  Con BET (m2/g)                : {df_inc['bet_m2g'].notna().sum():>7,}")
-print(f"  Con grupos funcionales        : {df_inc['grupos_func'].notna().sum():>7,}")
-print(f"  Con pH operacional            : {df_inc['ph_operacional'].notna().sum():>7,}")
-print(f"  Con tipo de matriz            : {df_inc['tipo_matriz'].notna().sum():>7,}")
-print(f"  Con ciclos regeneracion       : {df_inc['ciclos_regen'].notna().sum():>7,}")
-print(f"  Con qmax (mg/g)               : {df_inc['qmax_mg_g'].notna().sum():>7,}")
-print(f"  Con % remocion                : {df_inc['remocion_pct'].notna().sum():>7,}")
-print(f"  Con datos cuantitativos total : {df_inc['tiene_cuant'].sum():>7,}")
-print(f"  ─────────────────────────────────────────────")
+print(f"  Tiempo total                     : {t_total:.0f} segundos ({t_total/60:.1f} min)")
+print(f"  Registros cargados (RIS)         : {total_cargados:>7,}")
+print(f"  Duplicados eliminados (DOI)      : {n_dup_doi:>7,}")
+print(f"  Duplicados eliminados (fuzzy)    : {n_dup_fuzzy:>7,}")
+print(f"  Registros unicos analizados      : {len(df_base):>7,}")
+print(f"  -------------------------------------------------")
+print(f"  EXCLUIDOS                        : {conteos.get('EXCLUIDO',0):>7,}")
+print(f"  INCLUIDOS alta relevancia        : {conteos.get('INCLUIDO_ALTA',0):>7,}")
+print(f"  INCLUIDOS media relevancia       : {conteos.get('INCLUIDO_MEDIA',0):>7,}")
+print(f"  PRIORIDAD BAJA (revisar)         : {conteos.get('PRIORIDAD_BAJA',0):>7,}")
+print(f"  -------------------------------------------------")
+print(f"  Total incluidos (alta+media)     : {len(df_inc):>7,}")
+print(f"    Revisiones (antecedentes)      : {(df_inc['tipo_articulo']=='Revision').sum():>7,}")
+print(f"    Investigacion original         : {(df_inc['tipo_articulo']=='Investigacion original').sum():>7,}")
+print(f"  -------------------------------------------------")
+print(f"  Con datos cuantitativos (amplio) : {df_inc['tiene_cuant'].sum():>7,}")
+print(f"  Con pH + qmax + %rem (estricto)  : {n_triple_inc:>7,}  <-- CSV 09b")
+print(f"  -------------------------------------------------")
 print(f"  Top 5 paises:")
 for p, n in df_inc["pais"].value_counts().head(5).items():
     cont = CONTINENTE.get(str(p), "?")
-    print(f"    {str(p):<30} {n:>5}  ({cont})")
-print(f"  Top 5 continentes:")
-for c, n in df_inc["continente"].value_counts().head(5).items():
-    print(f"    {str(c):<30} {n:>5}")
+    print(f"    {str(p):<32} {n:>5}  ({cont})")
 print(f"  Top 5 adsorbentes:")
 for a, n in df_inc["adsorbente"].value_counts().head(5).items():
-    print(f"    {str(a):<30} {n:>5}")
+    print(f"    {str(a):<32} {n:>5}")
 print(f"  Top 5 analitos:")
 analitos_exp = df_inc["analitos"].dropna().str.split("; ").explode()
 for a, n in analitos_exp.value_counts().head(5).items():
-    print(f"    {str(a):<30} {n:>5}")
-print(f"  Top 5 revistas:")
-for r, n in df_inc["journal_raw"].value_counts().head(5).items():
-    print(f"    {str(r)[:52]:<52} {n:>5}")
-titulo_seccion(f"10 archivos guardados en ./{OUTPUT_DIR}/")
-# ─────────────────────────────────────────────────────────────────────────────
-# VERIFICACIÓN PRISMA — DIAGNÓSTICO DETALLADO DE NÚMEROS
-# ─────────────────────────────────────────────────────────────────────────────
-titulo_seccion("VERIFICACIÓN PRISMA — NÚMEROS PARA TU TESIS")
+    print(f"    {str(a):<32} {n:>5}")
 
-total_unicos     = len(df_base)
-total_incluidos  = len(df_inc)
-total_excluidos  = conteos.get("EXCLUIDO", 0)
-total_prio_baja  = conteos.get("PRIORIDAD_BAJA", 0)
-total_alta       = conteos.get("INCLUIDO_ALTA", 0)
-total_media      = conteos.get("INCLUIDO_MEDIA", 0)
-total_cuant      = int(df_inc["tiene_cuant"].sum())
+titulo_seccion(f"11 archivos guardados en ./{OUTPUT_DIR}/")
 
-# Razones de exclusión — con desglose de etiquetas reales
+# =============================================================================
+# VERIFICACION PRISMA
+# =============================================================================
+titulo_seccion("VERIFICACION PRISMA — NUMEROS PARA TU TESIS")
+
+total_unicos    = len(df_base)
+total_incluidos = len(df_inc)
+total_excluidos = conteos.get("EXCLUIDO", 0)
+total_prio_baja = conteos.get("PRIORIDAD_BAJA", 0)
+total_alta      = conteos.get("INCLUIDO_ALTA", 0)
+total_media     = conteos.get("INCLUIDO_MEDIA", 0)
+total_cuant     = int(df_inc["tiene_cuant"].sum())
+
 excl_anio    = int((~df_base["anio_ok"]).sum())
 excl_doc     = int(df_base["exc_d"].sum())
 excl_contam  = int(df_base["exc_c"].sum())
 excl_estudio = int(df_base["exc_e"].sum())
 
-# Artículos con MÚLTIPLES razones de exclusión (solapamiento)
-excl_multiple = int(
-    ((df_base["exc_d"] + df_base["exc_c"] + df_base["exc_e"] +
-      (~df_base["anio_ok"]).astype(int)) > 1).sum()
-)
+suma_check = total_excluidos + total_incluidos + total_prio_baja
+ok_str = "OK SUMA CORRECTA" if suma_check == total_unicos else "REVISAR — la suma no cuadra"
 
 print(f"""
-  ┌─────────────────────────────────────────────────────────┐
-  │           FLUJO PRISMA — NÚMEROS VERIFICADOS            │
-  ├─────────────────────────────────────────────────────────┤
-  │  ENTRADA                                                │
-  │    Registros cargados del RIS          : {total_cargados:>7,}        │
-  │    Duplicados por DOI                  : {n_dup_doi:>7,}        │
-  │    Duplicados por titulo similar       : {n_dup_fuzzy:>7,}        │
-  │    Registros unicos para screening     : {total_unicos:>7,}        │
-  ├─────────────────────────────────────────────────────────┤
-  │  RAZONES DE EXCLUSIÓN (pueden solaparse)               │
-  │    Año fuera de {YEAR_MIN}-{YEAR_MAX}              : {excl_anio:>7,}        │
-  │    Tipo documental inadecuado          : {excl_doc:>7,}        │
-  │    Contaminante fuera de foco          : {excl_contam:>7,}        │
-  │    Tipo de estudio fuera de foco       : {excl_estudio:>7,}        │
-  │    (artículos con múltiples razones)   : {excl_multiple:>7,}        │
-  │                                                         │
-  │  ⚠️  NOTA: las razones se solapan, por eso su suma      │
-  │     puede ser mayor que el total de excluidos.          │
-  ├─────────────────────────────────────────────────────────┤
-  │  RESULTADO DEL SCREENING                               │
-  │    EXCLUIDOS (total real)              : {total_excluidos:>7,}        │
-  │    INCLUIDOS alta relevancia           : {total_alta:>7,}        │
-  │    INCLUIDOS media relevancia          : {total_media:>7,}        │
-  │    TOTAL INCLUIDOS (alta + media)      : {total_incluidos:>7,}        │
-  │    PRIORIDAD BAJA (revisar manual)     : {total_prio_baja:>7,}        │
-  ├─────────────────────────────────────────────────────────┤
-  │  PARA EL META-ANÁLISIS                                  │
-  │    Con datos cuantitativos             : {total_cuant:>7,}        │
-  │    (qmax, % remoción, isoterma o cinética reportada)    │
-  ├─────────────────────────────────────────────────────────┤
-  │  VERIFICACIÓN: {total_excluidos:,} + {total_incluidos:,} + {total_prio_baja:,} = {total_excluidos + total_incluidos + total_prio_baja:,}
-  │  Registros unicos totales              : {total_unicos:>7,}        │
-  │  {"✅ SUMA CORRECTA" if (total_excluidos + total_incluidos + total_prio_baja) == total_unicos else "❌ REVISAR — la suma no cuadra con registros unicos"}
-  └─────────────────────────────────────────────────────────┘
+  +----------------------------------------------------------+
+  |         FLUJO PRISMA — NUMEROS VERIFICADOS              |
+  +----------------------------------------------------------+
+  | ENTRADA                                                  |
+  |   Registros cargados del RIS       : {total_cargados:>7,}           |
+  |   Duplicados por DOI               : {n_dup_doi:>7,}           |
+  |   Duplicados por titulo similar    : {n_dup_fuzzy:>7,}           |
+  |   Registros unicos para screening  : {total_unicos:>7,}           |
+  +----------------------------------------------------------+
+  | RAZONES DE EXCLUSION (pueden solaparse)                  |
+  |   Anio fuera de {YEAR_MIN}-{YEAR_MAX}          : {excl_anio:>7,}           |
+  |   Tipo documental inadecuado       : {excl_doc:>7,}           |
+  |   Contaminante fuera de foco       : {excl_contam:>7,}           |
+  |   Tipo de estudio fuera de foco    : {excl_estudio:>7,}           |
+  +----------------------------------------------------------+
+  | RESULTADO DEL SCREENING                                  |
+  |   EXCLUIDOS (total real)           : {total_excluidos:>7,}           |
+  |   INCLUIDOS alta relevancia        : {total_alta:>7,}           |
+  |   INCLUIDOS media relevancia       : {total_media:>7,}           |
+  |   TOTAL INCLUIDOS (alta + media)   : {total_incluidos:>7,}           |
+  |   PRIORIDAD BAJA (revisar manual)  : {total_prio_baja:>7,}           |
+  +----------------------------------------------------------+
+  | PARA EL ANALISIS                                    |
+  |   Con datos cuantitativos (amplio) : {total_cuant:>7,}           |
+  |   Con pH + qmax + %rem (estricto)  : {n_triple_inc:>7,}   <- CSV 09b|
+  +----------------------------------------------------------+
+  | VERIFICACION: {total_excluidos} + {total_incluidos} + {total_prio_baja} = {suma_check}
+  | Registros unicos totales           : {total_unicos:>7,}           |
+  | {ok_str}
+  +----------------------------------------------------------+
 """)
 
-# Tabla de etiquetas con descripción clara para la tesis
-print("  DESCRIPCIÓN DE LAS ETIQUETAS (para metodología de la tesis):")
-print(f"  {'Etiqueta':<25} {'N':>7}  {'%':>6}  Descripción")
-print(f"  {'─'*25} {'─'*7}  {'─'*6}  {'─'*35}")
+print("  DESCRIPCION DE ETIQUETAS:")
+print(f"  {'Etiqueta':<25} {'N':>7}  {'%':>6}  Descripcion")
+print(f"  {'-'*25} {'-'*7}  {'-'*6}  {'-'*40}")
 for etiq, desc in [
-    ("INCLUIDO_ALTA",    "Cumple criterio AND + score >= 12"),
-    ("INCLUIDO_MEDIA",   "Cumple criterio AND + score >= 7"),
-    ("PRIORIDAD_BAJA",   "Score >= 3, no cumple criterio AND completo"),
-    ("EXCLUIDO",         "No cumple criterios minimos o criterio de exclusion"),
+    ("INCLUIDO_ALTA",  "pasa_core + 3 datos + score>=25"),
+    ("INCLUIDO_MEDIA", "pasa_core + 2 datos + score>=18"),
+    ("PRIORIDAD_BAJA", "pasa_core + score>=10, sin datos suficientes"),
+    ("EXCLUIDO",       "No cumple criterios minimos PICOS"),
 ]:
     n = conteos.get(etiq, 0)
-    pct = n / total_unicos * 100
+    pct = n / total_unicos * 100 if total_unicos > 0 else 0
     print(f"  {etiq:<25} {n:>7,}  {pct:>5.1f}%  {desc}")
 
-print(f"\n  CRITERIO AND MÍNIMO para INCLUIDO:")
-print(f"    hits_objetivo > 0  (menciona antibiotico o hormona)")
-print(f"    hits_agua > 0      (menciona medio acuoso)")
-print(f"    hits_adsorcion > 0 (menciona adsorcion o adsorbente)")
-print(f"    anio entre {YEAR_MIN} y {YEAR_MAX}")
-print(f"\n  PONDERACIÓN DEL SCORE:")
-print(f"    +4 por cada hit de objetivo  (antibiotico/hormona)")
-print(f"    +3 por cada hit de adsorcion")
-print(f"    +2 por cada hit de agua")
-print(f"    -8 si contaminante fuera de foco (exc_c)")
-print(f"    -6 si tipo de estudio fuera de foco (exc_e)")
-print(f"    -6 si tipo documental inadecuado (exc_d)")
+print(f"""
+  CRITERIOS pasa_core (todos obligatorios):
+    hits_obj >= 2  (menciona antibiotico o hormona al menos 2 veces)
+    hits_agu >= 1  (menciona medio acuoso)
+    hits_ads >= 3  (menciona adsorcion/adsorbente al menos 3 veces)
+    anio entre {YEAR_MIN} y {YEAR_MAX}
+
+  CRITERIO ADICIONAL para INCLUIDO (triple_flag):
+    flag_ph   = abstract menciona un valor de pH
+    flag_qmax = abstract menciona qmax o mg/g
+    flag_rem  = abstract menciona un % de remocion
+    INCLUIDO_ALTA  requiere los 3 simultaneos (triple_flag == 3)
+    INCLUIDO_MEDIA requiere al menos 2 (triple_flag >= 2)
+
+  PONDERACION DEL SCORE:
+    +4 por hit de antibiotico/hormona
+    +3 por hit de adsorcion/adsorbente
+    +2 por hit de agua
+    +4 si hay pH en abstract (flag_ph)
+    +5 si hay qmax en abstract (flag_qmax)
+    +4 si hay %rem en abstract (flag_rem)
+    -10 si contaminante fuera de foco (exc_c)
+    -8  si tipo de estudio fuera de foco (exc_e)
+    -8  si tipo documental inadecuado (exc_d)
+""")
+
 titulo_seccion("FIN — VERIFICACION COMPLETA")
+
