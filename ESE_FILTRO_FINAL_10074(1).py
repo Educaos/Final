@@ -357,7 +357,8 @@ df_base["score"] = (
 # pasa_core: criterios AND minimos estrictos
 df_base["pasa_core"] = (
     (df_base["hits_obj"] >= 1) &
-    (df_base["hits_ads"] >= 2) &    # bajé de 3 a 2
+    (df_base["hits_agu"] >= 1) &
+    (df_base["hits_ads"] >= 2) &
     (df_base["anio_ok"] == True)
 )
 
@@ -377,12 +378,12 @@ def razones(r):
     if r["exc_d"]:                 R.append("EXCL: tipo documental (conferencia/patente/erratum)")
     if r["exc_c"]:                 R.append("EXCL: contaminante fuera de foco (pesticida/metal/colorante)")
     if r["exc_e"]:                 R.append("EXCL: tipo de estudio (sensor/biomedico/genetica/AOP)")
-    if r["hits_obj"] < 2:          R.append("EXCL: pocas menciones de antibiotico/hormona (<2)")
+    if r["hits_obj"] < 1:          R.append("EXCL: no menciona antibiotico ni hormona")
     if r["hits_agu"] == 0:         R.append("EXCL: no menciona medio acuoso")
-    if r["hits_ads"] < 3:          R.append("EXCL: pocas menciones de adsorcion (<3)")
+    if r["hits_ads"] < 2:          R.append("EXCL: pocas menciones de adsorcion (<2)")
     if r["triple_flag"] < 2:       R.append("EXCL: abstract no reporta al menos 2 de (pH, qmax, %rem)")
     if not R and r["pasa_core"]:   R.append("INCLUIDO: cumple todos los criterios PICOS")
-    return " | ".join(R) if R else "REVISAR MANUALMENTE"
+    return " | ".join(R) if R else "REVISAR"
 
 
 def etiquetar(r):
@@ -825,7 +826,7 @@ guardar(df_base, "01_todos_los_articulos.csv",
 df_baja = df_base[df_base["etiqueta"] == "PRIORIDAD_BAJA"].copy()
 guardar(df_baja, "01b_prioridad_baja_ver.csv",
     ["title_raw","year","journal_raw","doi_raw","score","razones"],
-    "(revisar manualmente)")
+    "(revisar)")
 
 # 02 — PRISMA
 prisma = pd.DataFrame([
@@ -842,7 +843,7 @@ prisma = pd.DataFrame([
     {"etapa":"--- INCLUIDOS ---",                                "n": ""},
     {"etapa":"10. INCLUIDOS alta relevancia",                   "n": conteos.get("INCLUIDO_ALTA",0)},
     {"etapa":"11. INCLUIDOS media relevancia",                  "n": conteos.get("INCLUIDO_MEDIA",0)},
-    {"etapa":"12. PRIORIDAD BAJA (revisar manualmente)",        "n": conteos.get("PRIORIDAD_BAJA",0)},
+    {"etapa":"12. PRIORIDAD BAJA (revisar)",        "n": conteos.get("PRIORIDAD_BAJA",0)},
     {"etapa":"13. Con datos cuantitativos (tienen_cuant)",      "n": int(df_inc["tiene_cuant"].sum())},
     {"etapa":"14. Con triple dato pH+qmax+%rem (analisis)","n": n_triple_inc},
 ])
@@ -854,9 +855,14 @@ por_anio["pct"] = (por_anio["n_articulos"] / por_anio["n_articulos"].sum() * 100
 guardar(por_anio, "03_por_anio.csv", list(por_anio.columns), "(tendencia temporal)")
 
 # 04 — Por país y continente
+# Corrección B: incluir artículos sin país como 'Sin determinar'
 por_pais = (df_inc.groupby(["continente","pais"]).size()
             .reset_index(name="n_articulos")
             .sort_values("n_articulos", ascending=False))
+n_sin_pais = df_inc["pais"].isna().sum()
+if n_sin_pais > 0:
+    fila_sd = pd.DataFrame([{"continente": "Sin determinar", "pais": "Sin determinar", "n_articulos": n_sin_pais}])
+    por_pais = pd.concat([por_pais, fila_sd], ignore_index=True)
 por_pais["pct"] = (por_pais["n_articulos"] / len(df_inc) * 100).round(1)
 guardar(por_pais, "04_por_pais_continente.csv", list(por_pais.columns), "(bibliometria geografica)")
 
@@ -985,18 +991,18 @@ print(f"""
   |   Duplicados por titulo similar    : {n_dup_fuzzy:>7,}           |
   |   Registros unicos para screening  : {total_unicos:>7,}           |
   +----------------------------------------------------------+
-  | RAZONES DE EXCLUSION (pueden solaparse)                  |
+  | Durante la fase de cribado, los registros se excluyeron principalmente por año fuera del periodo de estudio, tipo documental inadecuado, contaminante fuera del foco de la revisión y tipo de estudio no pertinente. Estas categorías no fueron mutuamente excluyentes, por lo que sus frecuencias descriptivas no suman el total de registros excluidos.                  |
   |   Anio fuera de {YEAR_MIN}-{YEAR_MAX}          : {excl_anio:>7,}           |
   |   Tipo documental inadecuado       : {excl_doc:>7,}           |
   |   Contaminante fuera de foco       : {excl_contam:>7,}           |
   |   Tipo de estudio fuera de foco    : {excl_estudio:>7,}           |
   +----------------------------------------------------------+
-  | RESULTADO DEL SCREENING                                  |
+  | RESULTADO DE LA CLASIFICACIÓN                                  |
   |   EXCLUIDOS (total real)           : {total_excluidos:>7,}           |
   |   INCLUIDOS alta relevancia        : {total_alta:>7,}           |
   |   INCLUIDOS media relevancia       : {total_media:>7,}           |
   |   TOTAL INCLUIDOS (alta + media)   : {total_incluidos:>7,}           |
-  |   PRIORIDAD BAJA (revisar manual)  : {total_prio_baja:>7,}           |
+  |   PRIORIDAD BAJA (revisar)  : {total_prio_baja:>7,}           |
   +----------------------------------------------------------+
   | PARA EL ANALISIS                                    |
   |   Con datos cuantitativos (amplio) : {total_cuant:>7,}           |
@@ -1023,9 +1029,9 @@ for etiq, desc in [
 
 print(f"""
   CRITERIOS pasa_core (todos obligatorios):
-    hits_obj >= 2  (menciona antibiotico o hormona al menos 2 veces)
+    hits_obj >= 1  (menciona antibiotico o hormona al menos 1 vez)
     hits_agu >= 1  (menciona medio acuoso)
-    hits_ads >= 3  (menciona adsorcion/adsorbente al menos 3 veces)
+    hits_ads >= 2  (menciona adsorcion/adsorbente al menos 2 veces)
     anio entre {YEAR_MIN} y {YEAR_MAX}
 
   CRITERIO ADICIONAL para INCLUIDO (triple_flag):
@@ -1048,4 +1054,3 @@ print(f"""
 """)
 
 titulo_seccion("FIN — VERIFICACION COMPLETA")
-
